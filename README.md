@@ -26,12 +26,25 @@ Le hashrate et le taux de change sont rafraîchis si le cache a plus de 12 h.
 
 > ⚠️ Nécessite **Node ≥ 18.18** (le projet est validé sous Node 22). Si `node -v` affiche une version trop ancienne : `nvm use 22`.
 
+**Mode rapide (recommandé)** — build de production, chargement quasi instantané (~30 ms) :
+
 ```bash
 npm install
+npm run build
+npm run start
+```
+
+**Mode développement** (rechargement à chaud, mais premier chargement plus lent à cause de la compilation à la volée) :
+
+```bash
 npm run dev
 ```
 
-Ouvrir http://localhost:3000.
+Dans les deux cas, ouvrir **http://localhost:3000**.
+
+### Pourquoi c'est rapide
+
+Les données du graphique sont **récupérées côté serveur et injectées directement dans le HTML** : le graphique a ses données dès le premier rendu, sans aller-retour réseau supplémentaire. Et comme tout est servi depuis le cache SQLite local, aucune API externe n'est rappelée tant que les données du jour sont à jour.
 
 ## Méthode de calcul du coût de minage
 

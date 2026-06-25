@@ -6,6 +6,12 @@
       "runtimeExecutable": "/Users/patrick/.nvm/versions/node/v22.22.2/bin/node",
       "runtimeArgs": ["./node_modules/next/dist/bin/next", "dev", "--port", "3000"],
       "port": 3000
+    },
+    {
+      "name": "sebtest-prod",
+      "runtimeExecutable": "/Users/patrick/.nvm/versions/node/v22.22.2/bin/node",
+      "runtimeArgs": ["./node_modules/next/dist/bin/next", "start", "--port", "3000"],
+      "port": 3000
     }
   ]
 }
