@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, LineStyle } from "lightweight-charts";
 import {
-  fetchDailyUSD,
-  fetchHashrateHs,
-  fetchUsdChf,
   aggregate,
   toCandles,
   toLine,
@@ -71,15 +68,13 @@ export default function Home() {
     let alive = true;
     (async () => {
       try {
-        const [daily, fxRate, hHs] = await Promise.all([
-          fetchDailyUSD(),
-          fetchUsdChf().catch(() => 0.81),
-          fetchHashrateHs().catch(() => 9.5e20),
-        ]);
+        const res = await fetch("/api/data");
+        if (!res.ok) throw new Error("API /data : HTTP " + res.status);
+        const json = await res.json();
         if (!alive) return;
-        setRows(daily);
-        setFx(fxRate);
-        setHashrateEH(Math.round((hHs / 1e18) * 10) / 10);
+        setRows(json.daily);
+        setFx(json.fx);
+        setHashrateEH(Math.round((json.hashrateHs / 1e18) * 10) / 10);
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "Erreur de chargement");
       }

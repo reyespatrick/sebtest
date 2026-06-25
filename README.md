@@ -9,13 +9,18 @@ Tableau de bord de trading Bitcoin (Next.js + TypeScript).
 - **Coût de création (minage) d'un BTC en Chine** : ligne de référence sur le graphique, calculée à partir d'hypothèses ajustables (prix de l'électricité, efficacité du parc en J/TH, hashrate réseau, subvention de bloc).
 - Devise **USD ⇄ CHF** convertie au taux du jour.
 
-## Sources de données (gratuites, sans clé, côté navigateur)
+## Sources de données (gratuites, sans clé)
+
+Les données sont récupérées **côté serveur** (route `app/api/data`) et **mises en cache dans une base SQLite** (`data/btc.db`). Seuls les jours manquants sont retéléchargés ; les visites suivantes sont servies depuis le cache.
 
 | Donnée | API |
 |---|---|
-| Historique OHLC BTC/USD (depuis 2015) | Coinbase Exchange (`api.exchange.coinbase.com`) |
+| Historique OHLC BTC/USD (depuis août 2017) | **Binance.com** (`api.binance.com`, klines `BTCUSDT`) |
+| Backfill 2016 → 2017 (pour compléter les 10 ans) | Coinbase Exchange (`api.exchange.coinbase.com`) |
 | Hashrate réseau | mempool.space |
 | Taux USD→CHF du jour | frankfurter.dev (BCE) |
+
+Le hashrate et le taux de change sont rafraîchis si le cache a plus de 12 h.
 
 ## Démarrer
 
