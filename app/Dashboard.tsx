@@ -9,6 +9,7 @@ import {
   latestClose,
   miningCostUsd,
   type Row,
+  type BusinessDay,
   type Timeframe,
 } from "./btc";
 
@@ -23,6 +24,13 @@ function fmt(value: number, currency: Currency, digits = 0): string {
   return new Intl.NumberFormat("fr-CH", {
     style: "currency",
     currency,
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(value);
+}
+
+function nf(value: number, digits = 0): string {
+  return new Intl.NumberFormat("fr-CH", {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   }).format(value);
@@ -45,23 +53,33 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chartRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const seriesRef = useRef<any>(null);
+  const priceSeriesRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const priceLineRef = useRef<any>(null);
+  const costSeriesRef = useRef<any>(null);
+  const rangeRef = useRef<{ first: BusinessDay; last: BusinessDay } | null>(null);
 
-  const mult = currency === "CHF" ? fx : 1;
+  const curMult = currency === "CHF" ? fx : 1;
+
+  // --- Décomposition du calcul du coût de minage (en USD), étape par étape ---
+  const hashThs = hashrateEH * 1e6; // EH/s -> TH/s
+  const powerW = hashThs * efficiency; // J/TH * TH/s = W
+  const powerGW = powerW / 1e9;
+  const dailyKwh = (powerW / 1000) * 24;
+  const dailyGWh = dailyKwh / 1e6;
+  const dailyElecUsd = dailyKwh * elec;
+  const btcPerDay = 144 * SUBSIDY;
   const costUsd = miningCostUsd({
     hashrateHs: hashrateEH * 1e18,
     efficiency,
     elecUsdKwh: elec,
     subsidy: SUBSIDY,
   });
-  const costDisp = costUsd * mult;
+  const costDisp = costUsd * curMult;
   const costDispRef = useRef(costDisp);
   costDispRef.current = costDisp;
 
   const latestUsd = latestClose(rows);
-  const latestDisp = latestUsd * mult;
+  const latestDisp = latestUsd * curMult;
   const firstUsd = rows.length ? rows[0].close : 0;
   const perf = firstUsd ? ((latestUsd - firstUsd) / firstUsd) * 100 : 0;
 
@@ -92,55 +110,77 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
-      seriesRef.current = null;
-      priceLineRef.current = null;
+      priceSeriesRef.current = null;
+      costSeriesRef.current = null;
     };
   }, []);
 
-  // (Re)construction de la série selon période / type / devise
+  // (Re)construction des séries selon période / type / devise
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
-    if (seriesRef.current) {
-      chart.removeSeries(seriesRef.current);
-      seriesRef.current = null;
-      priceLineRef.current = null;
-    }
+    if (priceSeriesRef.current) chart.removeSeries(priceSeriesRef.current);
+    if (costSeriesRef.current) chart.removeSeries(costSeriesRef.current);
 
     const agg = aggregate(rows, timeframe);
-    let series;
+
+    // Série de prix (bougies ou ligne)
+    let priceData: { time: BusinessDay }[];
+    let priceSeries;
     if (chartType === "candles") {
-      series = chart.addCandlestickSeries({
+      priceSeries = chart.addCandlestickSeries({
         upColor: "#1a8f68",
         downColor: "#e24b4a",
         wickUpColor: "#1a8f68",
         wickDownColor: "#e24b4a",
         borderVisible: false,
       });
-      series.setData(toCandles(agg, mult));
+      const data = toCandles(agg, curMult);
+      priceSeries.setData(data);
+      priceData = data;
     } else {
-      series = chart.addLineSeries({ color: "#5b51d8", lineWidth: 2 });
-      series.setData(toLine(agg, mult));
+      priceSeries = chart.addLineSeries({ color: "#5b51d8", lineWidth: 2 });
+      const data = toLine(agg, curMult);
+      priceSeries.setData(data);
+      priceData = data;
     }
-    seriesRef.current = series;
+    priceSeriesRef.current = priceSeries;
 
-    priceLineRef.current = series.createPriceLine({
-      price: costDispRef.current,
+    // Ligne du coût de minage : horizontale, traverse tout le graphique
+    const first = priceData[0]?.time;
+    const last = priceData[priceData.length - 1]?.time;
+    rangeRef.current = first && last ? { first, last } : null;
+
+    const costSeries = chart.addLineSeries({
       color: "#c2820f",
-      lineWidth: 1,
+      lineWidth: 2,
       lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+      lastValueVisible: true,
       title: "Coût minage",
     });
+    if (first && last) {
+      costSeries.setData([
+        { time: first, value: costDispRef.current },
+        { time: last, value: costDispRef.current },
+      ]);
+    }
+    costSeriesRef.current = costSeries;
 
     chart.timeScale().fitContent();
-  }, [rows, timeframe, chartType, mult]);
+  }, [rows, timeframe, chartType, curMult]);
 
-  // Mise à jour de la ligne de coût de minage quand les hypothèses changent
+  // Mise à jour de la ligne de coût quand les hypothèses (ou la devise) changent
   useEffect(() => {
-    if (priceLineRef.current) {
-      priceLineRef.current.applyOptions({ price: costDisp });
+    const s = costSeriesRef.current;
+    const r = rangeRef.current;
+    if (s && r) {
+      s.setData([
+        { time: r.first, value: costDisp },
+        { time: r.last, value: costDisp },
+      ]);
     }
   }, [costDisp]);
 
@@ -198,6 +238,14 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
       <div className="grid">
         <div className="chartcard">
           <div ref={containerRef} className="chart" />
+          <div className="legend">
+            <span className="k">
+              <span className="candle" /> Cours du BTC
+            </span>
+            <span className="k">
+              <span className="dash" /> Coût de minage (Chine) · {fmt(costDisp, currency)}
+            </span>
+          </div>
         </div>
 
         <div className="panel">
@@ -250,12 +298,52 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
             <div className="l">Coût de création / BTC</div>
             <div className="v">{fmt(costDisp, currency)}</div>
           </div>
-
-          <p className="note">
-            Estimation = (hashrate × efficacité × 24 h × prix électricité) ÷ (144 blocs × subvention).
-            Taux USD/CHF du jour : {fx.toFixed(4)}.
-          </p>
         </div>
+      </div>
+
+      <div className="calc">
+        <h2>Comment ce coût de minage est-il calculé ?</h2>
+        <p>
+          « Créer » un bitcoin = le faire miner. Tous les mineurs du monde dépensent de
+          l&apos;électricité pour sécuriser le réseau et reçoivent en échange les nouveaux bitcoins.
+          Le coût de création d&apos;un BTC est donc le coût électrique journalier du réseau divisé
+          par le nombre de bitcoins minés dans la journée. Avec les hypothèses actuelles :
+        </p>
+        <ol>
+          <li>
+            Puissance du réseau = hashrate × efficacité = <b>{nf(hashrateEH, 1)} EH/s</b> ×{" "}
+            <b>{nf(efficiency)} J/TH</b> = <b>{nf(powerGW, 1)} GW</b>
+          </li>
+          <li>
+            Énergie sur 24 h = <b>{nf(powerGW, 1)} GW</b> × 24 h = <b>{nf(dailyGWh)} GWh</b> (={" "}
+            {nf(dailyKwh)} kWh)
+          </li>
+          <li>
+            Coût électrique du réseau / jour = <b>{nf(dailyKwh)} kWh</b> ×{" "}
+            <b>{fmt(elec, "USD", 3)}/kWh</b> = <b>{fmt(dailyElecUsd, "USD")}</b>
+          </li>
+          <li>
+            Bitcoins minés / jour ≈ 144 blocs × <b>{SUBSIDY} BTC</b> = <b>{nf(btcPerDay)} BTC</b>
+          </li>
+          <li>
+            Coût de création par BTC = <b>{fmt(dailyElecUsd, "USD")}</b> ÷ <b>{nf(btcPerDay)} BTC</b> ={" "}
+            <span className="res">{fmt(costUsd, "USD")}</span>
+            {currency === "CHF" && (
+              <>
+                {" "}
+                = <span className="res">{fmt(costUsd * fx, "CHF")}</span> (taux du jour {fx.toFixed(4)})
+              </>
+            )}
+          </li>
+        </ol>
+        <div className="formula">
+          coût / BTC = (hashrate × efficacité × 24 h × prix électricité) ÷ (144 × subvention)
+        </div>
+        <p style={{ marginTop: 10 }}>
+          Tous les paramètres (prix de l&apos;électricité, efficacité des machines, hashrate) sont
+          modifiables dans le panneau ci-dessus : le calcul et la ligne sur le graphique se mettent à
+          jour en direct.
+        </p>
       </div>
     </div>
   );
