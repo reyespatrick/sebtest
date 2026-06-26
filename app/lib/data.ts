@@ -4,17 +4,31 @@ import {
   candleCount,
   insertCandles,
   candlesSince,
+  hashCount,
+  insertHashrates,
+  allHashrates,
   getMeta,
   setMeta,
 } from "./db";
-import { binanceDailySince, coinbaseRange, fetchHashrateHs, fetchUsdChf } from "./sources";
-import type { Row } from "../btc";
+import {
+  binanceDailySince,
+  coinbaseRange,
+  fetchHashrateHs,
+  fetchHashrateSeries,
+  fetchUsdChf,
+} from "./sources";
+import type { Row, HashPoint } from "../btc";
 
 const DAY = 86400;
 const BINANCE_START_SEC = Math.floor(Date.parse("2017-08-17T00:00:00Z") / 1000);
 const HALF_DAY = 12 * 3600;
 
-export type DashboardData = { daily: Row[]; hashrateHs: number; fx: number };
+export type DashboardData = {
+  daily: Row[];
+  hashrates: HashPoint[];
+  hashrateHs: number;
+  fx: number;
+};
 
 export async function getData(): Promise<DashboardData> {
   const now = Math.floor(Date.now() / 1000);
@@ -35,15 +49,30 @@ export async function getData(): Promise<DashboardData> {
 
   const daily = candlesSince(tenYearsAgo);
 
-  // Hashrate & taux de change : rafraîchis si le cache a plus de 12 h.
-  let hash = getMeta("hashrate");
-  if (!hash || now - hash.updated > HALF_DAY) {
+  // Série historique de hashrate : (re)chargée si vide ou cache > 12 h.
+  const hu = getMeta("hash_series");
+  if (hashCount() === 0 || !hu || now - hu.updated > HALF_DAY) {
     try {
-      const h = await fetchHashrateHs();
-      setMeta("hashrate", String(h), now);
-      hash = { value: String(h), updated: now };
+      const series = await fetchHashrateSeries();
+      if (series.length) {
+        insertHashrates(series);
+        setMeta("hash_series", "1", now);
+      }
     } catch {}
   }
+  const hashrates = allHashrates();
+
+  // Hashrate courant = dernier point de la série (sinon mempool en repli).
+  let hashrateHs = hashrates.length ? hashrates[hashrates.length - 1].h * 1e12 : 0;
+  if (!hashrateHs) {
+    try {
+      hashrateHs = await fetchHashrateHs();
+    } catch {
+      hashrateHs = 9.5e20;
+    }
+  }
+
+  // Taux de change : rafraîchi si le cache a plus de 12 h.
   let fx = getMeta("fx");
   if (!fx || now - fx.updated > HALF_DAY) {
     try {
@@ -55,7 +84,8 @@ export async function getData(): Promise<DashboardData> {
 
   return {
     daily,
-    hashrateHs: hash ? Number(hash.value) : 9.5e20,
+    hashrates,
+    hashrateHs,
     fx: fx ? Number(fx.value) : 0.81,
   };
 }

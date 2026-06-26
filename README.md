@@ -17,8 +17,11 @@ Les données sont récupérées **côté serveur** (route `app/api/data`) et **m
 |---|---|
 | Historique OHLC BTC/USD (depuis août 2017) | **Binance.com** (`api.binance.com`, klines `BTCUSDT`) |
 | Backfill 2016 → 2017 (pour compléter les 10 ans) | Coinbase Exchange (`api.exchange.coinbase.com`) |
-| Hashrate réseau | mempool.space |
+| Hashrate historique sur 10 ans (courbe de coût) | blockchain.info (`api.blockchain.info/charts/hash-rate`) |
+| Hashrate réseau courant (repli) | mempool.space |
 | Taux USD→CHF du jour | frankfurter.dev (BCE) |
+
+La **courbe de coût de minage** trace le coût de création d'un BTC jour par jour, à partir du hashrate mesuré de chaque jour et de la subvention de bloc de l'époque (le coût double à chaque halving). L'efficacité du parc et le prix de l'électricité sont supposés constants (ajustables dans l'UI).
 
 Le hashrate et le taux de change sont rafraîchis si le cache a plus de 12 h.
 

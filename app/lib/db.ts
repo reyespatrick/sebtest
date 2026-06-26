@@ -2,7 +2,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import path from "path";
-import type { Row } from "../btc";
+import type { Row, HashPoint } from "../btc";
 
 const dir = path.join(process.cwd(), "data");
 mkdirSync(dir, { recursive: true });
@@ -13,6 +13,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS candles (
     ts INTEGER PRIMARY KEY,
     open REAL, high REAL, low REAL, close REAL
+  );
+  CREATE TABLE IF NOT EXISTS hashrate (
+    ts INTEGER PRIMARY KEY,
+    ths REAL
   );
   CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -46,6 +50,24 @@ export function candlesSince(ts: number): Row[] {
   return db
     .prepare("SELECT ts AS time, open, high, low, close FROM candles WHERE ts >= ? ORDER BY ts")
     .all(ts) as Row[];
+}
+
+const insHashStmt = db.prepare("INSERT OR REPLACE INTO hashrate (ts, ths) VALUES (?, ?)");
+const insHashTx = db.transaction((rows: HashPoint[]) => {
+  for (const r of rows) insHashStmt.run(r.t, r.h);
+});
+
+export function hashCount(): number {
+  const r = db.prepare("SELECT COUNT(*) AS c FROM hashrate").get() as { c: number };
+  return r.c;
+}
+
+export function insertHashrates(rows: HashPoint[]): void {
+  if (rows.length) insHashTx(rows);
+}
+
+export function allHashrates(): HashPoint[] {
+  return db.prepare("SELECT ts AS t, ths AS h FROM hashrate ORDER BY ts").all() as HashPoint[];
 }
 
 export function getMeta(key: string): { value: string; updated: number } | undefined {

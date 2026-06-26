@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const { daily, hashrateHs, fx } = await getData();
-  return <Dashboard initialDaily={daily} hashrateHs={hashrateHs} fx={fx} />;
+  const { daily, hashrates, hashrateHs, fx } = await getData();
+  return (
+    <Dashboard initialDaily={daily} hashrates={hashrates} hashrateHs={hashrateHs} fx={fx} />
+  );
 }

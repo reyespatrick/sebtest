@@ -76,3 +76,42 @@ export function miningCostUsd(a: MiningAssumptions): number {
   const btcPerDay = 144 * a.subsidy; // ~144 blocs/jour
   return btcPerDay > 0 ? dailyCostUsd / btcPerDay : 0;
 }
+
+// --- Courbe historique du coût de minage ---
+
+// Série de hashrate : t en secondes, h en TH/s.
+export type HashPoint = { t: number; h: number };
+
+// Subvention de bloc selon la date (le coût double à chaque halving).
+const HALVINGS: [number, number][] = [
+  [Math.floor(Date.parse("2024-04-20T00:00:00Z") / 1000), 3.125],
+  [Math.floor(Date.parse("2020-05-11T00:00:00Z") / 1000), 6.25],
+  [Math.floor(Date.parse("2016-07-09T00:00:00Z") / 1000), 12.5],
+];
+
+export function subsidyAt(sec: number): number {
+  for (const [t, s] of HALVINGS) if (sec >= t) return s;
+  return 25; // avant le halving de 2016
+}
+
+// Coût de minage estimé pour chaque bougie, à partir du hashrate du jour et de
+// la subvention de l'époque. L'efficacité et le prix de l'électricité sont
+// supposés constants (hypothèses de l'utilisateur).
+export function miningCostCurve(
+  rows: Row[],
+  hashrates: HashPoint[],
+  opts: { efficiency: number; elecUsdKwh: number; mult: number }
+): LinePoint[] {
+  if (!hashrates.length || !rows.length) return [];
+  const hs = [...hashrates].sort((a, b) => a.t - b.t);
+  let j = 0;
+  return rows.map((r) => {
+    while (j < hs.length - 1 && hs[j + 1].t <= r.time) j++;
+    const ths = hs[j].h; // TH/s du jour
+    const powerW = ths * opts.efficiency;
+    const dailyKwh = (powerW / 1000) * 24;
+    const btcPerDay = 144 * subsidyAt(r.time);
+    const costUsd = btcPerDay > 0 ? (dailyKwh * opts.elecUsdKwh) / btcPerDay : 0;
+    return { time: bd(r.time), value: costUsd * opts.mult };
+  });
+}

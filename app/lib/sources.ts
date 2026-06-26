@@ -1,5 +1,5 @@
 // Récupération des données externes. Côté serveur uniquement.
-import type { Row } from "../btc";
+import type { Row, HashPoint } from "../btc";
 
 const DAY = 86400;
 
@@ -66,11 +66,24 @@ export async function coinbaseRange(startSec: number, endSec: number): Promise<R
   return [...map.values()];
 }
 
-// --- Hashrate réseau (mempool.space), en H/s ---
+// --- Hashrate réseau courant (mempool.space), en H/s ---
 export async function fetchHashrateHs(): Promise<number> {
   const res = await fetch("https://mempool.space/api/v1/mining/hashrate/1m", { cache: "no-store" });
   const json = await res.json();
   return json.currentHashrate as number;
+}
+
+// --- Série historique du hashrate sur 10 ans (blockchain.info), en TH/s ---
+export async function fetchHashrateSeries(): Promise<HashPoint[]> {
+  const res = await fetch(
+    "https://api.blockchain.info/charts/hash-rate?timespan=10years&format=json&sampled=true",
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error("blockchain.info : HTTP " + res.status);
+  const json = (await res.json()) as { values: { x: number; y: number }[] };
+  return json.values
+    .filter((v) => v.y > 0)
+    .map((v) => ({ t: v.x, h: v.y })); // x en secondes, y en TH/s
 }
 
 // --- Taux USD -> CHF du jour (frankfurter.dev, BCE) ---

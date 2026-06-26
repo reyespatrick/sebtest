@@ -8,15 +8,16 @@ import {
   toLine,
   latestClose,
   miningCostUsd,
+  miningCostCurve,
   type Row,
-  type BusinessDay,
+  type HashPoint,
   type Timeframe,
 } from "./btc";
 
 type Currency = "USD" | "CHF";
 type ChartType = "candles" | "line";
 
-type Props = { initialDaily: Row[]; hashrateHs: number; fx: number };
+type Props = { initialDaily: Row[]; hashrates: HashPoint[]; hashrateHs: number; fx: number };
 
 const SUBSIDY = 3.125; // récompense de bloc depuis le halving d'avril 2024
 
@@ -36,18 +37,20 @@ function nf(value: number, digits = 0): string {
   }).format(value);
 }
 
-export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) {
+export default function Dashboard({ initialDaily, hashrates, hashrateHs, fx: fx0 }: Props) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [timeframe, setTimeframe] = useState<Timeframe>("weekly");
   const [chartType, setChartType] = useState<ChartType>("candles");
 
   const [elec, setElec] = useState(0.06); // USD/kWh
   const [efficiency, setEfficiency] = useState(25); // J/TH
-  const [hashrateEH, setHashrateEH] = useState(Math.round((hashrateHs / 1e18) * 10) / 10);
 
   // Données fournies par le serveur : présentes dès le premier rendu.
   const [rows] = useState<Row[]>(initialDaily);
   const [fx] = useState(fx0);
+
+  // Hashrate courant = donnée mesurée (non modifiable).
+  const hashrateEH = Math.round((hashrateHs / 1e18) * 10) / 10;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,12 +59,11 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
   const priceSeriesRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const costSeriesRef = useRef<any>(null);
-  const rangeRef = useRef<{ first: BusinessDay; last: BusinessDay } | null>(null);
 
   const curMult = currency === "CHF" ? fx : 1;
 
-  // --- Décomposition du calcul du coût de minage (en USD), étape par étape ---
-  const hashThs = hashrateEH * 1e6; // EH/s -> TH/s
+  // --- Décomposition du calcul du coût de minage actuel (en USD) ---
+  const hashThs = hashrateHs / 1e12; // H/s -> TH/s
   const powerW = hashThs * efficiency; // J/TH * TH/s = W
   const powerGW = powerW / 1e9;
   const dailyKwh = (powerW / 1000) * 24;
@@ -69,14 +71,12 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
   const dailyElecUsd = dailyKwh * elec;
   const btcPerDay = 144 * SUBSIDY;
   const costUsd = miningCostUsd({
-    hashrateHs: hashrateEH * 1e18,
+    hashrateHs,
     efficiency,
     elecUsdKwh: elec,
     subsidy: SUBSIDY,
   });
   const costDisp = costUsd * curMult;
-  const costDispRef = useRef(costDisp);
-  costDispRef.current = costDisp;
 
   const latestUsd = latestClose(rows);
   const latestDisp = latestUsd * curMult;
@@ -115,74 +115,55 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
     };
   }, []);
 
-  // (Re)construction des séries selon période / type / devise
+  // Série de prix (bougies ou ligne)
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-
     if (priceSeriesRef.current) chart.removeSeries(priceSeriesRef.current);
-    if (costSeriesRef.current) chart.removeSeries(costSeriesRef.current);
 
     const agg = aggregate(rows, timeframe);
-
-    // Série de prix (bougies ou ligne)
-    let priceData: { time: BusinessDay }[];
-    let priceSeries;
+    let series;
     if (chartType === "candles") {
-      priceSeries = chart.addCandlestickSeries({
+      series = chart.addCandlestickSeries({
         upColor: "#1a8f68",
         downColor: "#e24b4a",
         wickUpColor: "#1a8f68",
         wickDownColor: "#e24b4a",
         borderVisible: false,
       });
-      const data = toCandles(agg, curMult);
-      priceSeries.setData(data);
-      priceData = data;
+      series.setData(toCandles(agg, curMult));
     } else {
-      priceSeries = chart.addLineSeries({ color: "#5b51d8", lineWidth: 2 });
-      const data = toLine(agg, curMult);
-      priceSeries.setData(data);
-      priceData = data;
+      series = chart.addLineSeries({ color: "#5b51d8", lineWidth: 2 });
+      series.setData(toLine(agg, curMult));
     }
-    priceSeriesRef.current = priceSeries;
+    priceSeriesRef.current = series;
+    chart.timeScale().fitContent();
+  }, [rows, timeframe, chartType, curMult]);
 
-    // Ligne du coût de minage : horizontale, traverse tout le graphique
-    const first = priceData[0]?.time;
-    const last = priceData[priceData.length - 1]?.time;
-    rangeRef.current = first && last ? { first, last } : null;
+  // Courbe historique du coût de minage (recalculée si hypothèses / devise changent)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (costSeriesRef.current) chart.removeSeries(costSeriesRef.current);
 
-    const costSeries = chart.addLineSeries({
+    const agg = aggregate(rows, timeframe);
+    const curve = miningCostCurve(agg, hashrates, {
+      efficiency,
+      elecUsdKwh: elec,
+      mult: curMult,
+    });
+    const series = chart.addLineSeries({
       color: "#c2820f",
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: true,
       lastValueVisible: true,
       title: "Coût minage",
     });
-    if (first && last) {
-      costSeries.setData([
-        { time: first, value: costDispRef.current },
-        { time: last, value: costDispRef.current },
-      ]);
-    }
-    costSeriesRef.current = costSeries;
-
-    chart.timeScale().fitContent();
-  }, [rows, timeframe, chartType, curMult]);
-
-  // Mise à jour de la ligne de coût quand les hypothèses (ou la devise) changent
-  useEffect(() => {
-    const s = costSeriesRef.current;
-    const r = rangeRef.current;
-    if (s && r) {
-      s.setData([
-        { time: r.first, value: costDisp },
-        { time: r.last, value: costDisp },
-      ]);
-    }
-  }, [costDisp]);
+    series.setData(curve);
+    costSeriesRef.current = series;
+  }, [rows, timeframe, curMult, efficiency, elec, hashrates]);
 
   return (
     <div className="wrap">
@@ -243,7 +224,7 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
               <span className="candle" /> Cours du BTC
             </span>
             <span className="k">
-              <span className="dash" /> Coût de minage (Chine) · {fmt(costDisp, currency)}
+              <span className="dash" /> Coût de minage (courbe, Chine) · actuel {fmt(costDisp, currency)}
             </span>
           </div>
         </div>
@@ -277,17 +258,8 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
             </span>
           </div>
           <div className="row">
-            <label>Hashrate réseau</label>
-            <span>
-              <input
-                type="number"
-                step="10"
-                min="1"
-                value={hashrateEH}
-                onChange={(e) => setHashrateEH(parseFloat(e.target.value) || 0)}
-              />{" "}
-              EH/s
-            </span>
+            <label>Hashrate réseau (actuel)</label>
+            <span className="static">{nf(hashrateEH, 1)} EH/s</span>
           </div>
           <div className="row">
             <label>Subvention bloc</label>
@@ -295,7 +267,7 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
           </div>
 
           <div className="cost">
-            <div className="l">Coût de création / BTC</div>
+            <div className="l">Coût de création / BTC (aujourd&apos;hui)</div>
             <div className="v">{fmt(costDisp, currency)}</div>
           </div>
         </div>
@@ -307,7 +279,7 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
           « Créer » un bitcoin = le faire miner. Tous les mineurs du monde dépensent de
           l&apos;électricité pour sécuriser le réseau et reçoivent en échange les nouveaux bitcoins.
           Le coût de création d&apos;un BTC est donc le coût électrique journalier du réseau divisé
-          par le nombre de bitcoins minés dans la journée. Avec les hypothèses actuelles :
+          par le nombre de bitcoins minés dans la journée. Avec les valeurs actuelles :
         </p>
         <ol>
           <li>
@@ -340,9 +312,11 @@ export default function Dashboard({ initialDaily, hashrateHs, fx: fx0 }: Props) 
           coût / BTC = (hashrate × efficacité × 24 h × prix électricité) ÷ (144 × subvention)
         </div>
         <p style={{ marginTop: 10 }}>
-          Tous les paramètres (prix de l&apos;électricité, efficacité des machines, hashrate) sont
-          modifiables dans le panneau ci-dessus : le calcul et la ligne sur le graphique se mettent à
-          jour en direct.
+          La <b>courbe</b> sur le graphique applique cette même formule <b>jour par jour</b> : avec le
+          hashrate <b>mesuré</b> de chaque jour et la subvention de l&apos;époque (le coût double à
+          chaque halving). L&apos;efficacité et le prix de l&apos;électricité sont supposés constants —
+          modifie-les pour redimensionner toute la courbe. Historiquement, le cours du BTC est rarement
+          resté longtemps <em>sous</em> cette courbe : c&apos;est un « plancher mineurs ».
         </p>
       </div>
     </div>
